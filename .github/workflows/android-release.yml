@@ -32,21 +32,63 @@ jobs:
       - name: Install deps
         run: npm install --no-audit --no-fund
 
-      - name: Prebuild Android
+      - name: Prebuild Android (expo -> android/)
         run: npx expo prebuild -p android --no-install
 
-      # Force Kotlin 1.9.25 everywhere
-      - name: Force Kotlin 1.9.25
+      # ==== FORCE KOTLIN 1.9.25: vá tất cả nơi có thể tham chiếu ====
+      - name: Force Kotlin 1.9.25 (catalog + settings + build + props)
+        shell: bash
         run: |
+          set -e
+
+          # 0) Log trước khi vá (để nhìn thấy chỗ đang lấy 1.9.24)
+          echo ">>> BEFORE PATCH -- scan kotlin versions:"
+          grep -R --line-number -E 'kotlin[^0-9]*1\.9\.[0-9]+' android || true
+          grep -R --line-number -E 'org\.jetbrains\.kotlin\.android' android || true
+
+          # 1) Version catalog (RN 0.76+): android/gradle/libs.versions.toml
+          TML="android/gradle/libs.versions.toml"
+          if [ -f "$TML" ]; then
+            cp "$TML" "$TML.bak" || true
+            # đặt giá trị chuẩn
+            sed -i 's/^\s*kotlin\s*=\s*".*"/kotlin = "1.9.25"/' "$TML" || true
+            sed -i 's/^\s*jetbrains-kotlin-android\s*=\s*".*"/jetbrains-kotlin-android = "1.9.25"/' "$TML" || true
+          fi
+
+          # 2) settings.gradle(.kts): pluginManagement thường set version kotlin qua catalog
+          # - Trường hợp dạng: id("org.jetbrains.kotlin.android") version libs.versions.kotlin.get()
+          # - Hoặc hardcode 1.9.24
+          find android -maxdepth 1 -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print0 | while IFS= read -r -d '' F; do
+            cp "$F" "$F.bak" || true
+            sed -i 's/version[[:space:]]\+libs\.versions\.kotlin\.get()/version "1.9.25"/g' "$F" || true
+            sed -i 's/version[[:space:]]"1\.9\.24"/version "1.9.25"/g' "$F" || true
+            sed -i "s/version[[:space:]]'1\.9\.24'/version '1.9.25'/g" "$F" || true
+          done
+
+          # 3) build.gradle(.kts) ở root/android: đôi khi có plugins {} với kotlin
+          find android -maxdepth 1 -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' F; do
+            cp "$F" "$F.bak" || true
+            sed -i 's/version[[:space:]]\+libs\.versions\.kotlin\.get()/version "1.9.25"/g' "$F" || true
+            sed -i 's/version[[:space:]]"1\.9\.24"/version "1.9.25"/g' "$F" || true
+            sed -i "s/version[[:space:]]'1\.9\.24'/version '1.9.25'/g" "$F" || true
+          done
+
+          # 4) gradle.properties: thêm biến để các script nào đọc -P hoặc properties đều nhận
           echo "kotlinVersion=1.9.25" >> android/gradle.properties
           echo "android.kotlinVersion=1.9.25" >> android/gradle.properties
-          echo ">>> gradle.properties content:"
-          cat android/gradle.properties
+
+          # 5) In ra sau khi vá
+          echo ">>> AFTER PATCH -- scan kotlin versions:"
+          grep -R --line-number -E 'kotlin[^0-9]*1\.9\.[0-9]+' android || true
+          echo ">>> gradle.properties content (tail):"
+          tail -n 10 android/gradle.properties || true
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
+      # Dùng debug keystore cho release để cài test
       - name: Use debug signing for release
+        shell: bash
         run: |
           APP_BUILD_GRADLE="android/app/build.gradle"
           cp "$APP_BUILD_GRADLE" "$APP_BUILD_GRADLE.bak" || true
@@ -59,6 +101,7 @@ jobs:
 
       - name: Build APK (release)
         working-directory: android
+        # Đè phiên bản qua -P để bảo đảm mọi nơi đều nhận 1.9.25
         run: ./gradlew -Pandroid.kotlinVersion=1.9.25 -Pkotlin.version=1.9.25 :app:assembleRelease
 
       - name: Upload APK artifact
