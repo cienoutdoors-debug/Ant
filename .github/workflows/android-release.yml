@@ -1,0 +1,61 @@
+name: Android Release (no EAS)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    env:
+      CI: "false"     # tránh Metro coi là CI gây treo
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install deps (npm ci)
+        run: npm ci
+
+      - name: Prebuild Android (Expo Managed -> bare android/)
+        run: npx expo prebuild -p android --no-install
+
+      # Patch signing: dùng debug keystore cho release để cài lên máy test (không dành cho Play Store)
+      - name: Use debug signing for release
+        run: |
+          APP_BUILD_GRADLE="android/app/build.gradle"
+          cp "$APP_BUILD_GRADLE" "$APP_BUILD_GRADLE.bak"
+          # Thay signingConfig của release = signingConfigs.debug
+          perl -0777 -pe "s/release\s*\{([^}]*)signingConfig\s+signingConfigs\.release([^}]*)\}/release {\\1signingConfig signingConfigs.debug\\2}/s" "$APP_BUILD_GRADLE" > tmp.gradle || true
+          # Nếu không có release signing, thì chèn vào bên trong buildTypes.release
+          if ! grep -q "signingConfig signingConfigs.debug" tmp.gradle; then
+            perl -0777 -pe "s/buildTypes\s*\{\s*release\s*\{([^}]*)\}/buildTypes { release {\\1\n        signingConfig signingConfigs.debug\n    }}/s" "$APP_BUILD_GRADLE" > tmp2.gradle || true
+            mv tmp2.gradle tmp.gradle
+          fi
+          mv tmp.gradle "$APP_BUILD_GRADLE"
+          echo "Patched release signing to use debug keystore."
+
+      - name: Build APK (release)
+        working-directory: android
+        run: ./gradlew :app:assembleRelease
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
