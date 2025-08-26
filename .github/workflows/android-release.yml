@@ -35,6 +35,22 @@ jobs:
       - name: Prebuild Android (Expo Managed -> bare android/)
         run: npx expo prebuild -p android --no-install
 
+      # FIX: Bump Kotlin to 1.9.25 to match Compose Compiler 1.5.15
+      - name: Force Kotlin 1.9.25 (Compose compatibility)
+        run: |
+          FILE="android/gradle/libs.versions.toml"
+          if [ -f "$FILE" ]; then
+            cp "$FILE" "$FILE.bak"
+            # cập nhật cả alias plugin nếu có
+            perl -0777 -pe 's/kotlin\s*=\s*"(1\.9\.2[0-9])"/kotlin = "1.9.25"/g' "$FILE" > tmp.toml || true
+            perl -0777 -pe 's/jetbrains-kotlin-android\s*=\s*"(1\.9\.2[0-9])"/jetbrains-kotlin-android = "1.9.25"/g' tmp.toml > tmp2.toml || true
+            mv tmp2.toml "$FILE"
+            echo "Kotlin version after patch:"
+            grep -E 'kotlin\s*=|jetbrains-kotlin-android' "$FILE" || true
+          else
+            echo "versions.toml not found; skipping kotlin bump."
+          fi
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
