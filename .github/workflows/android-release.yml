@@ -29,42 +29,23 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install deps (npm install)
+      - name: Install deps
         run: npm install --no-audit --no-fund
 
-      - name: Prebuild Android (Expo Managed -> bare android/)
+      - name: Prebuild Android
         run: npx expo prebuild -p android --no-install
 
-      # ===== FIX KOTLIN -> 1.9.25 (Compose 1.5.15 yêu cầu) =====
-      - name: Force Kotlin 1.9.25 everywhere
-        shell: bash
+      # Force Kotlin 1.9.25 everywhere
+      - name: Force Kotlin 1.9.25
         run: |
-          set -e
-          # 1) Version Catalog (RN 0.76+ mặc định dùng)
-          FILE="android/gradle/libs.versions.toml"
-          if [ -f "$FILE" ]; then
-            cp "$FILE" "$FILE.bak" || true
-            # kotlin + alias plugin
-            sed -i 's/kotlin\s*=\s*\"1\.9\.2[0-9]\"/kotlin = "1.9.25"/g' "$FILE" || true
-            sed -i 's/jetbrains-kotlin-android\s*=\s*\"1\.9\.2[0-9]\"/jetbrains-kotlin-android = "1.9.25"/g' "$FILE" || true
-            echo ">>> libs.versions.toml after patch:"
-            grep -E 'kotlin\s*=|jetbrains-kotlin-android' "$FILE" || true
-          fi
-
-          # 2) settings.gradle / build.gradle: nếu có hardcode 1.9.24 thì nâng luôn
-          if [ -d android ]; then
-            grep -R --line-number -E '1\.9\.24' android || true
-            find android -type f \( -name "settings.gradle*" -o -name "build.gradle*" -o -name "*.kts" \) -print0 \
-              | xargs -0 sed -i 's/1\.9\.24/1.9.25/g' || true
-          fi
-
-          # 3) Cho Gradle biết biến môi trường (phòng trường hợp script đọc từ -P)
-          echo "ORG_GRADLE_PROJECT_kotlinVersion=1.9.25" >> $GITHUB_ENV
+          echo "kotlinVersion=1.9.25" >> android/gradle.properties
+          echo "android.kotlinVersion=1.9.25" >> android/gradle.properties
+          echo ">>> gradle.properties content:"
+          cat android/gradle.properties
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      # Dùng debug keystore cho release để cài thử trên máy
       - name: Use debug signing for release
         run: |
           APP_BUILD_GRADLE="android/app/build.gradle"
@@ -78,7 +59,7 @@ jobs:
 
       - name: Build APK (release)
         working-directory: android
-        run: ./gradlew -Pkotlin.version=1.9.25 :app:assembleRelease
+        run: ./gradlew -Pandroid.kotlinVersion=1.9.25 -Pkotlin.version=1.9.25 :app:assembleRelease
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
