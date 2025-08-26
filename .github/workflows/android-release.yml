@@ -29,8 +29,9 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install deps (npm ci)
-        run: npm ci
+      - name: Install deps (npm install)
+  run: npm install --no-audit --no-fund
+
 
       - name: Prebuild Android (Expo Managed -> bare android/)
         run: npx expo prebuild -p android --no-install
