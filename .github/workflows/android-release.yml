@@ -9,7 +9,7 @@ jobs:
   build-android:
     runs-on: ubuntu-latest
     env:
-      CI: "false"     # tránh Metro coi là CI gây treo
+      CI: "false"           # tránh Metro coi là CI gây treo
       EXPO_NO_TELEMETRY: "1"
     steps:
       - name: Checkout
@@ -30,11 +30,13 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install deps (npm install)
-  run: npm install --no-audit --no-fund
-
+        run: npm install --no-audit --no-fund
 
       - name: Prebuild Android (Expo Managed -> bare android/)
         run: npx expo prebuild -p android --no-install
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
 
       # Patch signing: dùng debug keystore cho release để cài lên máy test (không dành cho Play Store)
       - name: Use debug signing for release
