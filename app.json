@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Ant Compass",
+    "slug": "ant-compass-build-now",
+    "scheme": "antcompass",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b1220"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cien.antcompass"
+    },
+    "android": {
+      "package": "com.cien.antcompass",
+      "versionCode": 1,
+      "permissions": []
+    }
+  }
+}
