@@ -9,7 +9,7 @@ jobs:
   build-android:
     runs-on: ubuntu-latest
     env:
-      CI: "false"           # tránh Metro coi là CI gây treo
+      CI: "false"
       EXPO_NO_TELEMETRY: "1"
     steps:
       - name: Checkout
@@ -35,43 +35,50 @@ jobs:
       - name: Prebuild Android (Expo Managed -> bare android/)
         run: npx expo prebuild -p android --no-install
 
-      # FIX: Bump Kotlin to 1.9.25 to match Compose Compiler 1.5.15
-      - name: Force Kotlin 1.9.25 (Compose compatibility)
+      # ===== FIX KOTLIN -> 1.9.25 (Compose 1.5.15 yêu cầu) =====
+      - name: Force Kotlin 1.9.25 everywhere
+        shell: bash
         run: |
+          set -e
+          # 1) Version Catalog (RN 0.76+ mặc định dùng)
           FILE="android/gradle/libs.versions.toml"
           if [ -f "$FILE" ]; then
-            cp "$FILE" "$FILE.bak"
-            # cập nhật cả alias plugin nếu có
-            perl -0777 -pe 's/kotlin\s*=\s*"(1\.9\.2[0-9])"/kotlin = "1.9.25"/g' "$FILE" > tmp.toml || true
-            perl -0777 -pe 's/jetbrains-kotlin-android\s*=\s*"(1\.9\.2[0-9])"/jetbrains-kotlin-android = "1.9.25"/g' tmp.toml > tmp2.toml || true
-            mv tmp2.toml "$FILE"
-            echo "Kotlin version after patch:"
+            cp "$FILE" "$FILE.bak" || true
+            # kotlin + alias plugin
+            sed -i 's/kotlin\s*=\s*\"1\.9\.2[0-9]\"/kotlin = "1.9.25"/g' "$FILE" || true
+            sed -i 's/jetbrains-kotlin-android\s*=\s*\"1\.9\.2[0-9]\"/jetbrains-kotlin-android = "1.9.25"/g' "$FILE" || true
+            echo ">>> libs.versions.toml after patch:"
             grep -E 'kotlin\s*=|jetbrains-kotlin-android' "$FILE" || true
-          else
-            echo "versions.toml not found; skipping kotlin bump."
           fi
+
+          # 2) settings.gradle / build.gradle: nếu có hardcode 1.9.24 thì nâng luôn
+          if [ -d android ]; then
+            grep -R --line-number -E '1\.9\.24' android || true
+            find android -type f \( -name "settings.gradle*" -o -name "build.gradle*" -o -name "*.kts" \) -print0 \
+              | xargs -0 sed -i 's/1\.9\.24/1.9.25/g' || true
+          fi
+
+          # 3) Cho Gradle biết biến môi trường (phòng trường hợp script đọc từ -P)
+          echo "ORG_GRADLE_PROJECT_kotlinVersion=1.9.25" >> $GITHUB_ENV
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      # Patch signing: dùng debug keystore cho release để cài lên máy test (không dành cho Play Store)
+      # Dùng debug keystore cho release để cài thử trên máy
       - name: Use debug signing for release
         run: |
           APP_BUILD_GRADLE="android/app/build.gradle"
-          cp "$APP_BUILD_GRADLE" "$APP_BUILD_GRADLE.bak"
-          # Thay signingConfig của release = signingConfigs.debug
+          cp "$APP_BUILD_GRADLE" "$APP_BUILD_GRADLE.bak" || true
           perl -0777 -pe "s/release\s*\{([^}]*)signingConfig\s+signingConfigs\.release([^}]*)\}/release {\\1signingConfig signingConfigs.debug\\2}/s" "$APP_BUILD_GRADLE" > tmp.gradle || true
-          # Nếu không có release signing, thì chèn vào bên trong buildTypes.release
           if ! grep -q "signingConfig signingConfigs.debug" tmp.gradle; then
             perl -0777 -pe "s/buildTypes\s*\{\s*release\s*\{([^}]*)\}/buildTypes { release {\\1\n        signingConfig signingConfigs.debug\n    }}/s" "$APP_BUILD_GRADLE" > tmp2.gradle || true
             mv tmp2.gradle tmp.gradle
           fi
           mv tmp.gradle "$APP_BUILD_GRADLE"
-          echo "Patched release signing to use debug keystore."
 
       - name: Build APK (release)
         working-directory: android
-        run: ./gradlew :app:assembleRelease
+        run: ./gradlew -Pkotlin.version=1.9.25 :app:assembleRelease
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
