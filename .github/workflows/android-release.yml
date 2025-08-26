@@ -35,53 +35,89 @@ jobs:
       - name: Prebuild Android (expo -> android/)
         run: npx expo prebuild -p android --no-install
 
-      # ==== FORCE KOTLIN 1.9.25: vá tất cả nơi có thể tham chiếu ====
-      - name: Force Kotlin 1.9.25 (catalog + settings + build + props)
+      # ===== Force Kotlin 1.9.25: catalog + properties + settings.gradle resolutionStrategy =====
+      - name: Force Kotlin = 1.9.25 (everywhere)
         shell: bash
         run: |
           set -e
 
-          # 0) Log trước khi vá (để nhìn thấy chỗ đang lấy 1.9.24)
-          echo ">>> BEFORE PATCH -- scan kotlin versions:"
-          grep -R --line-number -E 'kotlin[^0-9]*1\.9\.[0-9]+' android || true
-          grep -R --line-number -E 'org\.jetbrains\.kotlin\.android' android || true
-
-          # 1) Version catalog (RN 0.76+): android/gradle/libs.versions.toml
+          # 1) Version catalog (RN 0.76+)
           TML="android/gradle/libs.versions.toml"
           if [ -f "$TML" ]; then
             cp "$TML" "$TML.bak" || true
-            # đặt giá trị chuẩn
-            sed -i 's/^\s*kotlin\s*=\s*".*"/kotlin = "1.9.25"/' "$TML" || true
-            sed -i 's/^\s*jetbrains-kotlin-android\s*=\s*".*"/jetbrains-kotlin-android = "1.9.25"/' "$TML" || true
+            # Đặt phiên bản trong [versions]
+            perl -0777 -pe 's/(?m)^\s*kotlin\s*=\s*".*"\s*$/kotlin = "1.9.25"/' "$TML" > tmp.toml || true
+            # Nếu có alias plugin tham chiếu trực tiếp version
+            perl -0777 -pe 's/(?m)^\s*jetbrains-kotlin-android\s*=\s*".*"\s*$/jetbrains-kotlin-android = "1.9.25"/' tmp.toml > tmp2.toml || true
+            mv tmp2.toml "$TML"
           fi
 
-          # 2) settings.gradle(.kts): pluginManagement thường set version kotlin qua catalog
-          # - Trường hợp dạng: id("org.jetbrains.kotlin.android") version libs.versions.kotlin.get()
-          # - Hoặc hardcode 1.9.24
-          find android -maxdepth 1 -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print0 | while IFS= read -r -d '' F; do
-            cp "$F" "$F.bak" || true
-            sed -i 's/version[[:space:]]\+libs\.versions\.kotlin\.get()/version "1.9.25"/g' "$F" || true
-            sed -i 's/version[[:space:]]"1\.9\.24"/version "1.9.25"/g' "$F" || true
-            sed -i "s/version[[:space:]]'1\.9\.24'/version '1.9.25'/g" "$F" || true
-          done
-
-          # 3) build.gradle(.kts) ở root/android: đôi khi có plugins {} với kotlin
-          find android -maxdepth 1 -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' F; do
-            cp "$F" "$F.bak" || true
-            sed -i 's/version[[:space:]]\+libs\.versions\.kotlin\.get()/version "1.9.25"/g' "$F" || true
-            sed -i 's/version[[:space:]]"1\.9\.24"/version "1.9.25"/g' "$F" || true
-            sed -i "s/version[[:space:]]'1\.9\.24'/version '1.9.25'/g" "$F" || true
-          done
-
-          # 4) gradle.properties: thêm biến để các script nào đọc -P hoặc properties đều nhận
+          # 2) gradle.properties để các script đọc -P/props đều nhận
           echo "kotlinVersion=1.9.25" >> android/gradle.properties
           echo "android.kotlinVersion=1.9.25" >> android/gradle.properties
 
-          # 5) In ra sau khi vá
-          echo ">>> AFTER PATCH -- scan kotlin versions:"
+          # 3) Inject resolutionStrategy vào settings.gradle(.kts)
+          SGR="android/settings.gradle"
+          SKTS="android/settings.gradle.kts"
+
+          inject_groovy() {
+            FILE="$1"
+            cp "$FILE" "$FILE.bak" || true
+            if grep -q "pluginManagement" "$FILE"; then
+              # Thêm resolutionStrategy bên trong pluginManagement nếu chưa có
+              perl -0777 -pe 's/pluginManagement\s*\{(?![^}]*resolutionStrategy)/pluginManagement {\n    resolutionStrategy {\n      eachPlugin {\n        if (requested.id.id.startsWith("org.jetbrains.kotlin")) {\n          useVersion("1.9.25")\n        }\n      }\n    }\n/s' "$FILE" > tmp.g || true
+              mv tmp.g "$FILE"
+            else
+              # Bọc pluginManagement mới
+              cat > tmp.g <<'EOF'
+pluginManagement {
+  resolutionStrategy {
+    eachPlugin {
+      if (requested.id.id.startsWith("org.jetbrains.kotlin")) {
+        useVersion("1.9.25")
+      }
+    }
+  }
+}
+EOF
+              cat "$FILE" >> tmp.g
+              mv tmp.g "$FILE"
+            fi
+          }
+
+          inject_kts() {
+            FILE="$1"
+            cp "$FILE" "$FILE.bak" || true
+            if grep -q "pluginManagement" "$FILE"; then
+              perl -0777 -pe 's/pluginManagement\s*\{(?![^}]*resolutionStrategy)/pluginManagement {\n    resolutionStrategy {\n      eachPlugin {\n        if (requested.id.id.startsWith("org.jetbrains.kotlin")) {\n          useVersion("1.9.25")\n        }\n      }\n    }\n/s' "$FILE" > tmp.k || true
+              mv tmp.k "$FILE"
+            else
+              cat > tmp.k <<'EOF'
+pluginManagement {
+  resolutionStrategy {
+    eachPlugin {
+      if (requested.id.id.startsWith("org.jetbrains.kotlin")) {
+        useVersion("1.9.25")
+      }
+    }
+  }
+}
+EOF
+              cat "$FILE" >> tmp.k
+              mv tmp.k "$FILE"
+            fi
+          }
+
+          if [ -f "$SGR" ]; then inject_groovy "$SGR"; fi
+          if [ -f "$SKTS" ]; then inject_kts "$SKTS"; fi
+
+          echo ">>> Scan kotlin versions AFTER patch:"
           grep -R --line-number -E 'kotlin[^0-9]*1\.9\.[0-9]+' android || true
-          echo ">>> gradle.properties content (tail):"
-          tail -n 10 android/gradle.properties || true
+          echo ">>> gradle.properties tail:"
+          tail -n 20 android/gradle.properties || true
+          echo ">>> Show settings.gradle(.kts) header:"
+          head -n 60 "$SGR" 2>/dev/null || true
+          head -n 60 "$SKTS" 2>/dev/null || true
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
@@ -101,7 +137,7 @@ jobs:
 
       - name: Build APK (release)
         working-directory: android
-        # Đè phiên bản qua -P để bảo đảm mọi nơi đều nhận 1.9.25
+        # Ép qua -P để bảo đảm mọi nơi dùng 1.9.25
         run: ./gradlew -Pandroid.kotlinVersion=1.9.25 -Pkotlin.version=1.9.25 :app:assembleRelease
 
       - name: Upload APK artifact
