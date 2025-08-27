@@ -35,42 +35,25 @@ jobs:
       - name: Prebuild Android (expo -> android/)
         run: npx expo prebuild -p android --no-install
 
-      # ===== Force Kotlin 1.9.25: catalog + properties + settings.gradle resolutionStrategy =====
-      - name: Force Kotlin = 1.9.25 (everywhere)
+      # Force Kotlin = 1.9.25 (catalog + properties + settings.gradle resolutionStrategy)
+      - name: Force Kotlin 1.9.25
         shell: bash
         run: |
           set -e
-
-          # 1) Version catalog (RN 0.76+)
           TML="android/gradle/libs.versions.toml"
           if [ -f "$TML" ]; then
             cp "$TML" "$TML.bak" || true
-            # Đặt phiên bản trong [versions]
             perl -0777 -pe 's/(?m)^\s*kotlin\s*=\s*".*"\s*$/kotlin = "1.9.25"/' "$TML" > tmp.toml || true
-            # Nếu có alias plugin tham chiếu trực tiếp version
             perl -0777 -pe 's/(?m)^\s*jetbrains-kotlin-android\s*=\s*".*"\s*$/jetbrains-kotlin-android = "1.9.25"/' tmp.toml > tmp2.toml || true
             mv tmp2.toml "$TML"
           fi
-
-          # 2) gradle.properties để các script đọc -P/props đều nhận
           echo "kotlinVersion=1.9.25" >> android/gradle.properties
           echo "android.kotlinVersion=1.9.25" >> android/gradle.properties
 
-          # 3) Inject resolutionStrategy vào settings.gradle(.kts)
           SGR="android/settings.gradle"
           SKTS="android/settings.gradle.kts"
 
-          inject_groovy() {
-            FILE="$1"
-            cp "$FILE" "$FILE.bak" || true
-            if grep -q "pluginManagement" "$FILE"; then
-              # Thêm resolutionStrategy bên trong pluginManagement nếu chưa có
-              perl -0777 -pe 's/pluginManagement\s*\{(?![^}]*resolutionStrategy)/pluginManagement {\n    resolutionStrategy {\n      eachPlugin {\n        if (requested.id.id.startsWith("org.jetbrains.kotlin")) {\n          useVersion("1.9.25")\n        }\n      }\n    }\n/s' "$FILE" > tmp.g || true
-              mv tmp.g "$FILE"
-            else
-              # Bọc pluginManagement mới
-              cat > tmp.g <<'EOF'
-pluginManagement {
+          inject_block='pluginManagement {
   resolutionStrategy {
     eachPlugin {
       if (requested.id.id.startsWith("org.jetbrains.kotlin")) {
@@ -78,51 +61,24 @@ pluginManagement {
       }
     }
   }
-}
-EOF
-              cat "$FILE" >> tmp.g
-              mv tmp.g "$FILE"
+}'
+
+          if [ -f "$SGR" ]; then
+            cp "$SGR" "$SGR.bak" || true
+            if ! grep -q "resolutionStrategy" "$SGR"; then
+              printf "%s\n\n" "$inject_block" | cat - "$SGR" > tmp && mv tmp "$SGR"
             fi
-          }
-
-          inject_kts() {
-            FILE="$1"
-            cp "$FILE" "$FILE.bak" || true
-            if grep -q "pluginManagement" "$FILE"; then
-              perl -0777 -pe 's/pluginManagement\s*\{(?![^}]*resolutionStrategy)/pluginManagement {\n    resolutionStrategy {\n      eachPlugin {\n        if (requested.id.id.startsWith("org.jetbrains.kotlin")) {\n          useVersion("1.9.25")\n        }\n      }\n    }\n/s' "$FILE" > tmp.k || true
-              mv tmp.k "$FILE"
-            else
-              cat > tmp.k <<'EOF'
-pluginManagement {
-  resolutionStrategy {
-    eachPlugin {
-      if (requested.id.id.startsWith("org.jetbrains.kotlin")) {
-        useVersion("1.9.25")
-      }
-    }
-  }
-}
-EOF
-              cat "$FILE" >> tmp.k
-              mv tmp.k "$FILE"
+          fi
+          if [ -f "$SKTS" ]; then
+            cp "$SKTS" "$SKTS.bak" || true
+            if ! grep -q "resolutionStrategy" "$SKTS"; then
+              printf "%s\n\n" "$inject_block" | cat - "$SKTS" > tmp && mv tmp "$SKTS"
             fi
-          }
-
-          if [ -f "$SGR" ]; then inject_groovy "$SGR"; fi
-          if [ -f "$SKTS" ]; then inject_kts "$SKTS"; fi
-
-          echo ">>> Scan kotlin versions AFTER patch:"
-          grep -R --line-number -E 'kotlin[^0-9]*1\.9\.[0-9]+' android || true
-          echo ">>> gradle.properties tail:"
-          tail -n 20 android/gradle.properties || true
-          echo ">>> Show settings.gradle(.kts) header:"
-          head -n 60 "$SGR" 2>/dev/null || true
-          head -n 60 "$SKTS" 2>/dev/null || true
+          fi
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      # Dùng debug keystore cho release để cài test
       - name: Use debug signing for release
         shell: bash
         run: |
@@ -137,7 +93,6 @@ EOF
 
       - name: Build APK (release)
         working-directory: android
-        # Ép qua -P để bảo đảm mọi nơi dùng 1.9.25
         run: ./gradlew -Pandroid.kotlinVersion=1.9.25 -Pkotlin.version=1.9.25 :app:assembleRelease
 
       - name: Upload APK artifact
