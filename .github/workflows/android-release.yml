@@ -1,9 +1,11 @@
 name: Android Release (no EAS)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:    # Cho phép bấm Run workflow thủ công
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
 
 jobs:
   build-android:
@@ -20,76 +22,33 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Java 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install deps
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Prebuild Android (expo -> android/)
+      - name: Prebuild Android (Expo Managed → bare android/)
         run: npx expo prebuild -p android --no-install
 
-      # Force Kotlin = 1.9.25 (catalog + properties + settings.gradle resolutionStrategy)
-      - name: Force Kotlin 1.9.25
-        shell: bash
-        run: |
-          set -e
-          TML="android/gradle/libs.versions.toml"
-          if [ -f "$TML" ]; then
-            cp "$TML" "$TML.bak" || true
-            perl -0777 -pe 's/(?m)^\s*kotlin\s*=\s*".*"\s*$/kotlin = "1.9.25"/' "$TML" > tmp.toml || true
-            perl -0777 -pe 's/(?m)^\s*jetbrains-kotlin-android\s*=\s*".*"\s*$/jetbrains-kotlin-android = "1.9.25"/' tmp.toml > tmp2.toml || true
-            mv tmp2.toml "$TML"
-          fi
-          echo "kotlinVersion=1.9.25" >> android/gradle.properties
-          echo "android.kotlinVersion=1.9.25" >> android/gradle.properties
-
-          SGR="android/settings.gradle"
-          SKTS="android/settings.gradle.kts"
-
-          inject_block='pluginManagement {
-  resolutionStrategy {
-    eachPlugin {
-      if (requested.id.id.startsWith("org.jetbrains.kotlin")) {
-        useVersion("1.9.25")
-      }
-    }
-  }
-}'
-
-          if [ -f "$SGR" ]; then
-            cp "$SGR" "$SGR.bak" || true
-            if ! grep -q "resolutionStrategy" "$SGR"; then
-              printf "%s\n\n" "$inject_block" | cat - "$SGR" > tmp && mv tmp "$SGR"
-            fi
-          fi
-          if [ -f "$SKTS" ]; then
-            cp "$SKTS" "$SKTS.bak" || true
-            if ! grep -q "resolutionStrategy" "$SKTS"; then
-              printf "%s\n\n" "$inject_block" | cat - "$SKTS" > tmp && mv tmp "$SKTS"
-            fi
-          fi
-
-      - name: Make gradlew executable
-        run: chmod +x android/gradlew
-
-      - name: Use debug signing for release
-        shell: bash
+      # Patch signing để dùng debug keystore cho release build (chỉ để test cài APK, không upload Play Store)
+      - name: Patch release signing
         run: |
           APP_BUILD_GRADLE="android/app/build.gradle"
-          cp "$APP_BUILD_GRADLE" "$APP_BUILD_GRADLE.bak" || true
+          cp "$APP_BUILD_GRADLE" "$APP_BUILD_GRADLE.bak"
           perl -0777 -pe "s/release\s*\{([^}]*)signingConfig\s+signingConfigs\.release([^}]*)\}/release {\\1signingConfig signingConfigs.debug\\2}/s" "$APP_BUILD_GRADLE" > tmp.gradle || true
           if ! grep -q "signingConfig signingConfigs.debug" tmp.gradle; then
             perl -0777 -pe "s/buildTypes\s*\{\s*release\s*\{([^}]*)\}/buildTypes { release {\\1\n        signingConfig signingConfigs.debug\n    }}/s" "$APP_BUILD_GRADLE" > tmp2.gradle || true
             mv tmp2.gradle tmp.gradle
           fi
           mv tmp.gradle "$APP_BUILD_GRADLE"
+          echo "✅ Patched release signing to use debug keystore."
 
       - name: Build APK (release)
         working-directory: android
